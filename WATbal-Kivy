@@ -1,0 +1,97 @@
+import os
+import json
+import asyncio
+
+from playwright.async_api import async_playwright
+from kivy.app import App
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+
+
+class WATbal(App):
+    def build(self):
+        self.window = GridLayout()
+        self.window.cols = 1
+        self.window.spacing = 10
+
+        self.balance_label = Label(text="Click 'Check Balance' to retrieve your Flex Dollar balance")
+        self.window.add_widget(self.balance_label)
+
+        self.check_balance_button = Button(text="Check Balance")
+        self.check_balance_button.bind(on_press=self.check_balance)
+        self.window.add_widget(self.check_balance_button)
+
+        return self.window
+
+    def check_balance(self, instance):
+        self.balance_label.text = "Loading..."
+        asyncio.run(self.run_flex_scrape())
+
+    async def run_flex_scrape(self):
+        try:
+            balance = await self.flex_scrape()
+            self.balance_label.text = str("Your total Flex Dollar balance is: " + balance)
+        except:
+            self.balance_label.text = "Error"
+
+    async def new_scrape(self, url):
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=False)
+            page = await browser.new_page()
+
+            await page.goto(url)
+
+            # wait for Duo Mobile Authentication
+            await page.wait_for_selector('#trust-browser-button', timeout=60000)
+            await page.click('#trust-browser-button')
+
+            # wait for the funds tab to open
+            await page.wait_for_selector('header', state='visible')
+            await page.goto('https://secure.touchnet.net/C22566_oneweb/Deposit')
+
+            # select flex dollars
+            await page.wait_for_selector('td.text-right')
+            data = await page.inner_text('td.text-right')
+
+            # save cookies so that Duo Mobile Authentication does not have to be redone later
+            cookies = await page.context.cookies()
+            with open('cookies.json', 'w') as cookie_file:
+                json.dump(cookies, cookie_file)
+
+            await browser.close()
+            return data
+
+    async def scrape(self, url):
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            context = await browser.new_context()
+
+            with open('cookies.json', 'r') as cookie_file:
+                cookies = json.load(cookie_file)
+            await context.add_cookies(cookies)
+
+            page = await context.new_page()
+            await page.goto(url)
+
+            # wait for the funds tab to open
+            await page.wait_for_selector('header', state='visible')
+            await page.goto('https://secure.touchnet.net/C22566_oneweb/Deposit')
+
+            # select flex dollars
+            await page.wait_for_selector('td.text-right')
+            data = await page.inner_text('td.text-right')
+
+            await browser.close()
+            return data
+
+    async def flex_scrape(self):
+        url = 'https://secure.touchnet.net/C22566_oneweb/'
+        if os.path.isfile('cookies.json'):
+            return await self.scrape(url)
+        else:
+            return await self.new_scrape(url)
+
+
+
+WATbal().run()
